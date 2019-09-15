@@ -202,6 +202,69 @@ class TextLayerBuilder {
     return result;
   }
 
+  _convertHighlightMatches(highlightMatches) {
+    // Early exit if there is nothing to convert.
+    if (!highlightMatches) {
+      return [];
+    }
+    const { findController, textContentItemsStr, } = this;
+
+    const end = textContentItemsStr.length - 1;
+    const result = [];
+
+    let i = 0, iIndex = 0;
+    const matches = Object.keys(highlightMatches).map(function (item) {
+      return parseInt(item);
+    });
+
+    for (let m = 0, mm = matches.length; m < mm; m++) {
+      // Calculate the start position.
+      let matchIdx = matches[m];
+
+      let queryLen = highlightMatches[matchIdx].phrase.length;
+
+      // Loop over the divIdxs.
+      while (i !== end &&
+             matchIdx >= (iIndex + textContentItemsStr[i].length)) {
+        iIndex += textContentItemsStr[i].length;
+        i++;
+      }
+
+      if (i === textContentItemsStr.length) {
+        console.error('Could not find a matching mapping');
+      }
+
+      const highlightId = highlightMatches[matchIdx].highlightId;
+
+      let match = {
+        begin: {
+          divIdx: i,
+          offset: matchIdx - iIndex,
+          highlightId: highlightId,
+        },
+      };
+
+      matchIdx += queryLen;
+
+      // Somewhat the same array as above, but use > instead of >= to get
+      // the end position right.
+      while (i !== end &&
+             matchIdx > (iIndex + textContentItemsStr[i].length)) {
+        iIndex += textContentItemsStr[i].length;
+        i++;
+      }
+
+      match.end = {
+        divIdx: i,
+        offset: matchIdx - iIndex,
+        highlightId: highlightId,
+      };
+      result.push(match);
+    }
+
+    return result;
+  }
+
   _renderMatches(matches) {
     // Early exit if there is nothing to render.
     if (matches.length === 0) {
@@ -212,19 +275,20 @@ class TextLayerBuilder {
     const isSelectedPage = (pageIdx === findController.selected.pageIdx);
     const selectedMatchIdx = findController.selected.matchIdx;
     const highlightAll = findController.state.highlightAll;
+    const { highlights, selectedHighlightId } = findController.state;
     let prevEnd = null;
     let infinity = {
       divIdx: -1,
       offset: undefined,
     };
 
-    function beginText(begin, className) {
+    function beginText(begin, className, dataset) {
       let divIdx = begin.divIdx;
       textDivs[divIdx].textContent = '';
-      appendTextToDiv(divIdx, 0, begin.offset, className);
+      appendTextToDiv(divIdx, 0, begin.offset, className, dataset);
     }
 
-    function appendTextToDiv(divIdx, fromOffset, toOffset, className) {
+    function appendTextToDiv(divIdx, fromOffset, toOffset, className, dataset) {
       let div = textDivs[divIdx];
       let content = textContentItemsStr[divIdx].substring(fromOffset, toOffset);
       let node = document.createTextNode(content);
@@ -232,6 +296,9 @@ class TextLayerBuilder {
         let span = document.createElement('span');
         span.className = className;
         span.appendChild(node);
+        if (dataset) {
+          span.setAttribute('data-highlight-id', dataset.highlightId);
+        }
         div.appendChild(span);
         return;
       }
@@ -251,15 +318,18 @@ class TextLayerBuilder {
       let match = matches[i];
       let begin = match.begin;
       let end = match.end;
-      const isSelected = (isSelectedPage && i === selectedMatchIdx);
-      const highlightSuffix = (isSelected ? ' selected' : '');
+      let highlightSuffix = '';
 
-      if (isSelected) { // Attempt to scroll the selected match into view.
-        findController.scrollMatchIntoView({
-          element: textDivs[begin.divIdx],
-          pageIndex: pageIdx,
-          matchIndex: selectedMatchIdx,
-        });
+      if (!highlights) {
+        const isSelected = (isSelectedPage && i === selectedMatchIdx);
+        if (isSelected) {
+          highlightSuffix = ' selected';
+          findController.scrollMatchIntoView({
+            element: textDivs[begin.divIdx],
+            pageIndex: pageIdx,
+            matchIndex: selectedMatchIdx,
+          });
+        }
       }
 
       // Match inside new div.
@@ -274,16 +344,17 @@ class TextLayerBuilder {
         appendTextToDiv(prevEnd.divIdx, prevEnd.offset, begin.offset);
       }
 
+      const dataset = { highlightId: begin.highlightId };
+      let className = `highlight${highlightSuffix}`;
       if (begin.divIdx === end.divIdx) {
-        appendTextToDiv(begin.divIdx, begin.offset, end.offset,
-                        'highlight' + highlightSuffix);
+        appendTextToDiv(begin.divIdx, begin.offset, end.offset, className, dataset);
       } else {
-        appendTextToDiv(begin.divIdx, begin.offset, infinity.offset,
-                        'highlight begin' + highlightSuffix);
+        appendTextToDiv(begin.divIdx, begin.offset, infinity.offset, `${className} begin`, dataset);
         for (let n0 = begin.divIdx + 1, n1 = end.divIdx; n0 < n1; n0++) {
-          textDivs[n0].className = 'highlight middle' + highlightSuffix;
+          textDivs[n0].className = `${className} middle`;
+          textDivs[n0].dataset.highlightId = begin.highlightId;
         }
-        beginText(end, 'highlight end' + highlightSuffix);
+        beginText(end, `${className} end`, dataset);
       }
       prevEnd = end;
     }
@@ -291,6 +362,11 @@ class TextLayerBuilder {
     if (prevEnd) {
       appendTextToDiv(prevEnd.divIdx, prevEnd.offset, infinity.offset);
     }
+
+    this.eventBus.dispatch('searchmatchesrendered', {
+      source: this,
+      pageNumber: pageIdx,
+    });
   }
 
   _updateMatches() {
@@ -318,12 +394,18 @@ class TextLayerBuilder {
     if (!findController || !findController.highlightMatches) {
       return;
     }
-    // Convert the matches on the `findController` into the match format
-    // used for the textLayer.
-    const pageMatches = findController.pageMatches[pageIdx] || null;
-    const pageMatchesLength = findController.pageMatchesLength[pageIdx] || null;
 
-    this.matches = this._convertMatches(pageMatches, pageMatchesLength);
+    if (findController.state.highlights) {
+      const pageMatches = findController.pageHighlightMatches[pageIdx] || null;
+      this.matches = this._convertHighlightMatches(pageMatches);
+    } else {
+      // Convert the matches on the `findController` into the match format
+      // used for the textLayer.
+      const pageMatches = findController.pageMatches[pageIdx] || null;
+      const pageMatchesLength = findController.pageMatchesLength[pageIdx] || null;
+      this.matches = this._convertMatches(pageMatches, pageMatchesLength);
+    }
+
     this._renderMatches(this.matches);
   }
 

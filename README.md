@@ -1,3 +1,33 @@
+# PDF.js with elasticsearch highlights
+
+Read below please the original `README.md`, it was forked from the
+[`mozilla/pdfjs-dist`
+repository](https://github.com/mozilla/pdfjs-dist). Here are short
+notes regarding the custom implementation of `PDF.js` that supports
+elasticsearch highlights.
+
+`gulp` is required in order to build `PDF.js`:
+
+```
+$ npm install -g gulp-cli
+```
+
+Then build `PDF.js` by means of the following commands:
+
+```
+$ npm install
+$ gulp dist
+```
+
+Then push the dist to the
+[`pdfjs-lib`](https://github.com/atykhonov/pdfjs-dist) repository:
+
+```
+$ cd build/dist/; git push --tags git@github.com:atykhonov/pdfjs-dist.git master
+```
+
+Then execute `npm install` in the repository where `PDF.js` is in use.
+
 # PDF.js [![Build Status](https://travis-ci.org/mozilla/pdf.js.svg?branch=master)](https://travis-ci.org/mozilla/pdf.js)
 
 [PDF.js](https://mozilla.github.io/pdf.js/) is a Portable Document Format (PDF) viewer that is built with HTML5.
